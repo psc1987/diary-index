@@ -119,6 +119,7 @@
   .lib-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
   .lib-title { font-size: 13px; letter-spacing: 0.09em; text-transform: uppercase; color: rgba(255,255,255,0.8); }
   .lib-note { font-size: 12.5px; color: rgba(255,255,255,0.55); }
+  .lib-tools { display: flex; align-items: center; gap: 10px; }
   .lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-items: start; }
   .card { border: 1px solid rgba(255,255,255,0.24); border-radius: 16px; padding: 20px 22px; background: rgba(255,255,255,0.095); cursor: pointer; transition: all 180ms ease; display: flex; flex-direction: column; gap: 10px; }
   .card:hover { background: rgba(255,255,255,0.11); border-color: rgba(255,255,255,0.34); }
@@ -258,7 +259,12 @@
   <section class="section library" id="library">
     <div class="lib-head">
       <span class="lib-title" id="libraryTitle"></span>
-      <span class="lib-note">카드를 클릭하면 전체 화면으로 열려요</span>
+      <div class="lib-tools">
+        <span class="lib-note">카드를 클릭하면 전체 화면으로 열려요</span>
+        <button class="btn-ghost" id="backupBtn">백업</button>
+        <button class="btn-ghost" id="restoreBtn">복원</button>
+        <input type="file" id="restoreFile" accept="application/json,.json" hidden>
+      </div>
     </div>
     <div class="lib-grid" id="libGrid"></div>
     <p class="lib-empty" id="libEmpty" style="display: none;">이 폴더에는 아직 노트가 없어요. 위에서 작성해 보세요.</p>
@@ -697,6 +703,52 @@
     els.modalRendered.innerHTML = mdToHtml(state.mBody || '_내용이 없습니다._');
   }
 
+  /* ---------------- backup + restore ---------------- */
+  function backup() {
+    const payload = {
+      app: 'foldcraft',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      folders: state.folders,
+      events: state.events
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'foldcraft-backup-' + todayIso() + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function restore(file) {
+    const reader = new FileReader();
+    reader.onerror = () => window.alert('파일을 읽지 못했습니다.');
+    reader.onload = () => {
+      let data;
+      try { data = JSON.parse(String(reader.result)); }
+      catch (e) { window.alert('백업 파일을 읽을 수 없습니다. JSON 형식이 아닙니다.'); return; }
+      if (!data || !Array.isArray(data.events)) {
+        window.alert('Foldcraft 백업 파일이 아닙니다.');
+        return;
+      }
+      const msg = '현재 노트 ' + state.events.length + '개를 백업본의 ' + data.events.length + '개로 덮어씁니다.\n'
+        + '되돌릴 수 없으니, 지금 것도 남기려면 먼저 [백업]을 눌러 두세요.\n\n계속할까요?';
+      if (!window.confirm(msg)) return;
+      state.events = data.events;
+      if (Array.isArray(data.folders) && data.folders.length) state.folders = data.folders;
+      if (state.folder !== '전체' && state.folders.indexOf(state.folder) < 0) state.folder = '전체';
+      state.openId = null;
+      saveEvents();
+      saveFolders();
+      render();
+      window.alert('복원 완료 · 노트 ' + state.events.length + '개');
+    };
+    reader.readAsText(file);
+  }
+
   /* ---------------- render + events ---------------- */
   function render() {
     renderCalendar();
@@ -731,6 +783,14 @@
     saveFolders();
     state.folder = name;
     render();
+  });
+
+  $('backupBtn').addEventListener('click', backup);
+  $('restoreBtn').addEventListener('click', () => $('restoreFile').click());
+  $('restoreFile').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) restore(f);
+    e.target.value = '';
   });
 
   els.draftTitle.addEventListener('input', (e) => { state.title = e.target.value; });
