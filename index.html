@@ -129,6 +129,7 @@
   .card-tags { display: flex; align-items: center; gap: 8px; }
   .tag-folder { font-family: 'Geist Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 999px; background: rgba(255,255,255,0.16); color: rgba(255,255,255,0.85); }
   .tag-review { font-family: 'Geist Mono', monospace; font-size: 10.5px; letter-spacing: 0.1em; }
+  .tag-date { font-family: 'Geist Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em; color: rgba(255,255,255,0.6); }
   .card-remove { border: 0; background: transparent; color: rgba(255,255,255,0.35); font-size: 17px; line-height: 1; cursor: pointer; padding: 2px 4px; }
   .card-remove:hover { color: #fff; }
   .card-excerpt { font-size: 13.5px; line-height: 1.65; color: rgba(255,255,255,0.8); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
@@ -402,7 +403,7 @@
     year: now.getFullYear(),
     month: now.getMonth(),
     selected: todayIso(),
-    events: load(KEY, []),
+    events: migrate(load(KEY, [])),
     folders: load(FKEY, []),
     folder: '전체',
     title: '',
@@ -422,6 +423,35 @@
   function persist(key, value) {
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
   }
+
+  /* 예전 구조는 복습을 독립 사본(rep + id 접미사 -rN)으로 저장했다.
+     원본 하나에 review: [1, 7, 30] 형태로 합치고, 원본이 없는 사본은
+     내용을 잃지 않도록 일반 노트로 살려둔다. 새 구조에는 영향이 없다. */
+  function migrate(events) {
+    if (!Array.isArray(events)) return [];
+    const base = events.filter(e => e && !e.rep);
+    const byId = {};
+    base.forEach(e => { byId[e.id] = e; });
+
+    const orphans = [];
+    events.forEach(e => {
+      if (!e || !e.rep) return;
+      const src = byId[String(e.id).replace(/-r\d+$/, '')];
+      if (src) {
+        src.review = (src.review || []).concat([e.rep]);
+      } else {
+        const solo = Object.assign({}, e);
+        delete solo.rep;
+        orphans.push(solo);
+      }
+    });
+
+    base.forEach(e => {
+      if (!e.review) return;
+      e.review = e.review.filter((n, i, a) => a.indexOf(n) === i).sort((a, b) => a - b);
+    });
+    return base.concat(orphans);
+  }
   const saveEvents = () => persist(KEY, state.events);
   const saveFolders = () => persist(FKEY, state.folders);
 
@@ -433,11 +463,25 @@
     }];
   }
 
+  /* 마이그레이션·시드 결과를 바로 저장해 다음 로드에서 되풀이되지 않게 한다. */
+  saveEvents();
+  saveFolders();
+
   const inFolder = (e) => state.folder === '전체' || (e.folder || '일반') === state.folder;
   const stripeOf = (e) => (e.rep ? REVIEW_ACCENT : ACCENT);
+  const reviewOf = (e) => (Array.isArray(e.review) ? e.review : []);
+  const byDateDesc = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+
+  /* 복습은 사본을 저장하지 않는다. 달력에 필요한 D+N 항목은 원본의
+     review 배열에서 그때그때 펼쳐 만들고, id는 원본과 같게 둔다.
+     덕분에 수정·삭제가 원본 하나만 건드리면 전부 따라온다. */
   const eventsByDate = () => {
     const map = {};
-    state.events.filter(inFolder).forEach(e => { (map[e.date] = map[e.date] || []).push(e); });
+    const put = (date, e) => { (map[date] = map[date] || []).push(e); };
+    state.events.filter(inFolder).forEach(e => {
+      put(e.date, e);
+      reviewOf(e).forEach(n => put(shift(e.date, n), Object.assign({}, e, { rep: n })));
+    });
     return map;
   };
 
@@ -574,7 +618,7 @@
     els.reviewToggle.style.border = '1px solid ' + (state.review ? REVIEW_ACCENT : 'rgba(255,255,255,0.18)');
     els.reviewToggle.style.color = state.review ? REVIEW_ACCENT : 'rgba(255,255,255,0.8)';
     els.reviewHint.textContent = state.review
-      ? '1일 · 7일 · 30일 후에도 같은 일정이 자동 추가됩니다'
+      ? '1일 · 7일 · 30일 후 달력에 복습으로 표시됩니다 · 사본은 만들지 않아요'
       : '반복 학습이 필요하면 복습을 켜세요';
   }
 
@@ -582,15 +626,15 @@
     const title = state.title.trim();
     if (!title && !state.body.trim()) return;
     const folder = state.folder === '전체' ? (state.folders[0] || '일반') : state.folder;
-    const base = { date: state.selected, folder, title: title || '제목 없는 노트', body: state.body };
-    const stamp = Date.now();
-    const batch = [Object.assign({ id: 'e' + stamp }, base)];
-    if (state.review) {
-      REVIEW_STEPS.forEach(n => batch.push(Object.assign({}, base, {
-        id: 'e' + stamp + '-r' + n, date: shift(state.selected, n), rep: n
-      })));
-    }
-    state.events = state.events.concat(batch);
+    const note = {
+      id: 'e' + Date.now(),
+      date: state.selected,
+      folder,
+      title: title || '제목 없는 노트',
+      body: state.body
+    };
+    if (state.review) note.review = REVIEW_STEPS.slice();
+    state.events = state.events.concat([note]);
     saveEvents();
     state.title = '';
     state.body = '';
@@ -602,13 +646,16 @@
 
   /* ---------------- library ---------------- */
   function renderLibrary() {
-    const selected = eventsByDate()[state.selected] || [];
-    els.libraryTitle.textContent = state.folder === '전체' ? '이 날의 노트' : '이 날의 노트 · ' + state.folder;
+    /* 날짜와 무관하게 선택한 폴더의 노트 전체를 최신순으로. 복습은 원본에
+       배지로만 표시하므로 같은 노트가 여러 번 나오지 않는다. */
+    const notes = state.events.filter(inFolder).slice().sort(byDateDesc);
+    els.libraryTitle.textContent = (state.folder === '전체' ? '전체 노트' : '폴더 · ' + state.folder)
+      + '  ' + notes.length;
     els.libGrid.innerHTML = '';
-    els.libGrid.style.display = selected.length ? 'grid' : 'none';
-    els.libEmpty.style.display = selected.length ? 'none' : 'block';
+    els.libGrid.style.display = notes.length ? 'grid' : 'none';
+    els.libEmpty.style.display = notes.length ? 'none' : 'block';
 
-    selected.forEach(e => {
+    notes.forEach(e => {
       const card = document.createElement('article');
       card.className = 'card';
       card.addEventListener('click', () => openNote(e));
@@ -623,15 +670,20 @@
       title.textContent = e.title;
       const tags = document.createElement('div');
       tags.className = 'card-tags';
+      const date = document.createElement('span');
+      date.className = 'tag-date';
+      date.textContent = e.date;
+      tags.appendChild(date);
       const folder = document.createElement('span');
       folder.className = 'tag-folder';
       folder.textContent = e.folder || '일반';
       tags.appendChild(folder);
-      if (e.rep) {
+      const reps = reviewOf(e);
+      if (reps.length) {
         const badge = document.createElement('span');
         badge.className = 'tag-review';
-        badge.textContent = '복습 · D+' + e.rep;
-        badge.style.color = stripeOf(e);
+        badge.textContent = '복습 · D+' + reps.join(' / D+');
+        badge.style.color = REVIEW_ACCENT;
         tags.appendChild(badge);
       }
       meta.appendChild(title);
@@ -643,6 +695,7 @@
       remove.title = '삭제';
       remove.addEventListener('click', (ev) => {
         ev.stopPropagation();
+        if (reps.length && !window.confirm('"' + e.title + '"을 삭제하면 복습 ' + reps.length + '건도 함께 사라집니다.\n계속할까요?')) return;
         state.events = state.events.filter(x => x.id !== e.id);
         saveEvents();
         if (state.openId === e.id) closeModal();
@@ -699,7 +752,9 @@
     els.modalBodyGrid.style.gridTemplateColumns = state.mEdit ? 'minmax(0, 1fr) minmax(0, 1fr)' : 'minmax(0, 1fr)';
     els.modalEditor.style.display = state.mEdit ? 'flex' : 'none';
     els.modalTitleRead.textContent = state.mTitle;
-    els.modalMeta.textContent = open.date + '  ·  ' + (state.mFolder || '일반');
+    const reps = reviewOf(open);
+    els.modalMeta.textContent = open.date + '  ·  ' + (state.mFolder || '일반')
+      + (reps.length ? '  ·  복습 D+' + reps.join(' / D+') : '');
     els.modalRendered.innerHTML = mdToHtml(state.mBody || '_내용이 없습니다._');
   }
 
@@ -707,7 +762,7 @@
   function backup() {
     const payload = {
       app: 'foldcraft',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       folders: state.folders,
       events: state.events
@@ -734,10 +789,11 @@
         window.alert('Foldcraft 백업 파일이 아닙니다.');
         return;
       }
-      const msg = '현재 노트 ' + state.events.length + '개를 백업본의 ' + data.events.length + '개로 덮어씁니다.\n'
+      const incoming = migrate(data.events);
+      const msg = '현재 노트 ' + state.events.length + '개를 백업본의 ' + incoming.length + '개로 덮어씁니다.\n'
         + '되돌릴 수 없으니, 지금 것도 남기려면 먼저 [백업]을 눌러 두세요.\n\n계속할까요?';
       if (!window.confirm(msg)) return;
-      state.events = data.events;
+      state.events = incoming;
       if (Array.isArray(data.folders) && data.folders.length) state.folders = data.folders;
       if (state.folder !== '전체' && state.folders.indexOf(state.folder) < 0) state.folder = '전체';
       state.openId = null;
