@@ -43,6 +43,7 @@
   .md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.22); margin: 18px 0; }
   .md a { text-decoration: underline; text-underline-offset: 2px; }
   .md strong { font-weight: 600; }
+  .md mark { background: rgba(255,209,102,0.34); color: inherit; padding: 1px 4px; border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 
   /* ---------- hero ---------- */
   .hero { position: sticky; top: 0; height: 100vh; overflow: hidden; z-index: 0; }
@@ -189,6 +190,30 @@
   .modal-meta { font-family: 'Geist Mono', monospace; font-size: 11px; letter-spacing: 0.1em; color: rgba(255,255,255,0.6); margin-bottom: 22px; }
   .modal-rendered { font-family: var(--font-read); font-size: 17.5px; color: var(--ink); max-width: 66ch; }
 
+  /* ---------- decoration (ink + stickers) ---------- */
+  .decor-bar { display: none; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.04); }
+  .decor-bar.open { display: flex; }
+  .decor-group { display: flex; align-items: center; gap: 6px; padding-right: 10px; margin-right: 4px; border-right: 1px solid rgba(255,255,255,0.14); }
+  .decor-group:last-child { border-right: 0; }
+  .decor-btn { border: 1px solid rgba(255,255,255,0.22); border-radius: 8px; background: rgba(255,255,255,0.05); padding: 6px 12px; font-size: 12.5px; color: rgba(232,230,239,0.8); cursor: pointer; transition: all 150ms ease; }
+  .decor-btn:hover { background: rgba(255,255,255,0.1); color: var(--ink); }
+  .decor-btn.on { border-color: #ffd166; background: rgba(255,209,102,0.2); color: #fff; }
+  .swatch { width: 26px; height: 26px; border: 2px solid transparent; border-radius: 999px; cursor: pointer; padding: 0; }
+  .swatch.on { border-color: #fff; }
+  .sticker-pick { border: 1px solid rgba(255,255,255,0.18); border-radius: 8px; background: rgba(255,255,255,0.05); padding: 3px 7px; font-size: 16px; line-height: 1.2; cursor: pointer; }
+  .sticker-pick.on { border-color: #ffd166; background: rgba(255,209,102,0.2); }
+  .decor-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: rgba(232,230,239,0.7); cursor: pointer; }
+  .decor-hint { font-size: 11.5px; color: rgba(232,230,239,0.45); }
+
+  .read-inner { position: relative; min-height: 100%; }
+  .ink-canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 2; }
+  .decorating .ink-canvas { pointer-events: auto; }
+  .sticker-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
+  .stk { position: absolute; user-select: none; -webkit-user-select: none; line-height: 1; transform: translate(-50%, -50%); }
+  .decorating .stk { pointer-events: auto; cursor: grab; touch-action: none; }
+  .stk-del { position: absolute; top: -8px; right: -12px; display: none; width: 20px; height: 20px; border: 0; border-radius: 999px; background: rgba(20,19,26,0.9); color: #fff; font-size: 12px; line-height: 1; cursor: pointer; }
+  .decorating .stk-del { display: block; }
+
   @media (max-width: 900px) {
     .editor-grid { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
     .editor { height: 68vh; }
@@ -278,6 +303,7 @@
 
 > 인용 · `코드`"></textarea>
         <div class="editor-actions">
+          <button class="btn-ghost" id="markBtn" title="선택한 글자에 형광펜">형광펜</button>
           <button class="review-toggle" id="reviewToggle"><span>복습</span><span class="cycle">1 · 7 · 30일</span></button>
           <span class="review-hint" id="reviewHint"></span>
           <button class="btn-solid" id="addEventBtn">일정 추가</button>
@@ -314,20 +340,40 @@
         <select class="modal-folder" id="modalFolder"></select>
       </div>
       <div class="modal-actions">
+        <button class="btn-outline" id="modalMarkBtn" title="선택한 글자에 형광펜">형광펜</button>
+        <button class="btn-outline" id="modalDecorToggle">꾸미기</button>
         <button class="btn-outline" id="modalEditToggle"></button>
         <button class="btn-save" id="modalSave">저장</button>
         <button class="btn-close" id="modalClose">×</button>
       </div>
     </header>
+    <div class="decor-bar" id="decorBar">
+      <div class="decor-group" id="toolGroup"></div>
+      <div class="decor-group" id="colorGroup"></div>
+      <div class="decor-group" id="stickerGroup"></div>
+      <div class="decor-group">
+        <button class="decor-btn" id="undoInk">되돌리기</button>
+        <button class="decor-btn" id="clearInk">전체 지우기</button>
+      </div>
+      <div class="decor-group">
+        <label class="decor-toggle"><input type="checkbox" id="penOnly" checked> 펜만 인식</label>
+      </div>
+      <span class="decor-hint" id="decorHint"></span>
+    </div>
+
     <div class="modal-body" id="modalBodyGrid">
       <div class="modal-editor" id="modalEditor">
         <input class="modal-title-input" id="modalTitleInput" placeholder="제목">
         <textarea class="modal-body-input" id="modalBodyInput" placeholder="마크다운으로 작성…"></textarea>
       </div>
-      <div class="modal-read">
-        <h2 id="modalTitleRead"></h2>
-        <div class="modal-meta" id="modalMeta"></div>
-        <div class="modal-rendered md" id="modalRendered"></div>
+      <div class="modal-read" id="modalRead">
+        <div class="read-inner" id="readInner">
+          <h2 id="modalTitleRead"></h2>
+          <div class="modal-meta" id="modalMeta"></div>
+          <div class="modal-rendered md" id="modalRendered"></div>
+          <canvas class="ink-canvas" id="inkCanvas"></canvas>
+          <div class="sticker-layer" id="stickerLayer"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -358,6 +404,7 @@
   function inline(s) {
     return s
       .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/==([^=\n]+)==/g, '<mark>$1</mark>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
       .replace(/(^|[^\w_])__([^_]+)__(?=[^\w_]|$)/g, '$1<strong>$2</strong>')
@@ -447,15 +494,38 @@
     mTitle: '',
     mBody: '',
     mFolder: '일반',
-    mEdit: true
+    mEdit: true,
+    decor: false,
+    tool: 'hl',
+    color: '#ffd166',
+    sticker: '⭐',
+    penOnly: true
   };
+
+  const TOOLS = [
+    { k: 'hl', label: '형광펜', w: 0.028, alpha: 0.34 },
+    { k: 'pen', label: '펜', w: 0.005, alpha: 0.95 },
+    { k: 'eraser', label: '지우개', w: 0.03, alpha: 1 },
+    { k: 'sticker', label: '스티커', w: 0, alpha: 1 }
+  ];
+  const COLORS = ['#ffd166', '#5ac8ff', '#ff8fa3', '#9dff8f', '#c9a7ff', '#ffffff'];
+  const STICKERS = ['⭐', '🔥', '✅', '❗', '💡', '❤️', '🌱', '🎯', '📌', '😀', '😭', '🍀'];
+  const STICKER_SIZES = [28, 44, 64];
 
   function load(key, fallback) {
     try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; }
     catch (e) { return fallback; }
   }
+  /* 필기가 쌓이면 저장 한도(보통 5MB)에 닿을 수 있다. 조용히 실패하면
+     그린 걸 잃고도 모르므로 한 번은 알린다. */
+  let quotaWarned = false;
   function persist(key, value) {
-    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+    try { localStorage.setItem(key, JSON.stringify(value)); }
+    catch (e) {
+      if (quotaWarned) return;
+      quotaWarned = true;
+      window.alert('저장 공간이 가득 차 더 이상 저장되지 않습니다.\n\n[백업]으로 파일을 먼저 받아 두고,\n필기가 많은 오래된 노트를 정리해 주세요.');
+    }
   }
 
   /* 예전 구조는 복습을 독립 사본(rep + id 접미사 -rN)으로 저장했다.
@@ -505,6 +575,13 @@
   const stripeOf = (e) => (e.rep ? REVIEW_ACCENT : ACCENT);
   const reviewOf = (e) => (Array.isArray(e.review) ? e.review : []);
   const doneOf = (e) => (Array.isArray(e.done) ? e.done : []);
+  const inkOf = (e) => (Array.isArray(e.ink) ? e.ink : []);
+  const stickersOf = (e) => (Array.isArray(e.stickers) ? e.stickers : []);
+
+  function updateNote(id, patch) {
+    state.events = state.events.map(e => e.id === id ? Object.assign({}, e, patch) : e);
+    saveEvents();
+  }
   const byDateDesc = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
 
   /* 복습은 사본을 저장하지 않는다. 달력에 필요한 D+N 항목은 원본의
@@ -538,7 +615,11 @@
     modal: $('modal'), modalDate: $('modalDate'), modalFolder: $('modalFolder'),
     modalEditToggle: $('modalEditToggle'), modalBodyGrid: $('modalBodyGrid'), modalEditor: $('modalEditor'),
     modalTitleInput: $('modalTitleInput'), modalBodyInput: $('modalBodyInput'),
-    modalTitleRead: $('modalTitleRead'), modalMeta: $('modalMeta'), modalRendered: $('modalRendered')
+    modalTitleRead: $('modalTitleRead'), modalMeta: $('modalMeta'), modalRendered: $('modalRendered'),
+    modalDecorToggle: $('modalDecorToggle'), decorBar: $('decorBar'), decorHint: $('decorHint'),
+    toolGroup: $('toolGroup'), colorGroup: $('colorGroup'), stickerGroup: $('stickerGroup'),
+    modalRead: $('modalRead'), readInner: $('readInner'),
+    inkCanvas: $('inkCanvas'), stickerLayer: $('stickerLayer')
   };
 
   /* ---------------- hero scroll ---------------- */
@@ -852,10 +933,246 @@
     els.modalBodyGrid.style.gridTemplateColumns = state.mEdit ? 'minmax(0, 1fr) minmax(0, 1fr)' : 'minmax(0, 1fr)';
     els.modalEditor.style.display = state.mEdit ? 'flex' : 'none';
     els.modalTitleRead.textContent = state.mTitle;
+    renderDecorBar();
+    /* 렌더가 끝나 높이가 정해진 뒤에 캔버스를 맞춘다. */
+    requestAnimationFrame(renderDecor);
     const reps = reviewOf(open);
     els.modalMeta.textContent = open.date + '  ·  ' + (state.mFolder || '일반')
       + (reps.length ? '  ·  복습 D+' + reps.join(' / D+') : '');
     els.modalRendered.innerHTML = mdToHtml(state.mBody || '_내용이 없습니다._');
+  }
+
+  /* ---------------- decoration: ink + stickers ---------------- */
+  /* 좌표는 캔버스 폭에 대한 비율로 저장한다. 태블릿과 PC의 폭이 달라도
+     같은 자리에 그려지고, 소수점을 줄여 localStorage 용량도 아낀다.
+     y도 폭으로 나눠 가로세로 비율이 틀어지지 않게 한다. */
+  const round4 = (n) => Math.round(n * 10000) / 10000;
+  const toolOf = (k) => TOOLS.filter(t => t.k === k)[0] || TOOLS[0];
+
+  let drawing = null;   // 그리는 중인 스트로크
+  let dragging = null;  // 옮기는 중인 스티커
+
+  function canvasWidth() {
+    return els.inkCanvas.clientWidth || els.readInner.clientWidth || 1;
+  }
+
+  function localPoint(ev) {
+    const r = els.inkCanvas.getBoundingClientRect();
+    const W = r.width || 1;
+    return { x: round4((ev.clientX - r.left) / W), y: round4((ev.clientY - r.top) / W) };
+  }
+
+  function fitCanvas() {
+    const cv = els.inkCanvas;
+    const w = els.readInner.clientWidth;
+    const h = Math.max(els.readInner.scrollHeight, els.modalRead.clientHeight);
+    if (!w || !h) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.style.width = w + 'px';
+    cv.style.height = h + 'px';
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    cv.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+    els.stickerLayer.style.height = h + 'px';
+  }
+
+  function strokesOfOpen() {
+    const open = state.events.filter(e => e.id === state.openId)[0];
+    return open ? inkOf(open) : [];
+  }
+
+  function drawInk() {
+    const cv = els.inkCanvas;
+    const ctx = cv.getContext('2d');
+    const W = cv.clientWidth;
+    ctx.clearRect(0, 0, cv.clientWidth, cv.clientHeight);
+    const all = strokesOfOpen().concat(drawing ? [drawing] : []);
+    all.forEach(s => {
+      if (!s.p || s.p.length < 2) return;
+      const t = toolOf(s.t);
+      ctx.save();
+      ctx.globalAlpha = t.alpha;
+      ctx.strokeStyle = s.c;
+      ctx.lineWidth = Math.max(1, s.w * W);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(s.p[0] * W, s.p[1] * W);
+      for (let i = 2; i < s.p.length; i += 2) ctx.lineTo(s.p[i] * W, s.p[i + 1] * W);
+      if (s.p.length === 2) ctx.lineTo(s.p[0] * W + 0.1, s.p[1] * W);
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+
+  /* 지우개는 획 단위로 지운다. 점 하나라도 반경 안에 들면 그 획 전체를 삭제. */
+  function eraseAt(pt) {
+    const r = toolOf('eraser').w;
+    const kept = strokesOfOpen().filter(s => {
+      for (let i = 0; i < s.p.length; i += 2) {
+        const dx = s.p[i] - pt.x, dy = s.p[i + 1] - pt.y;
+        if (dx * dx + dy * dy < r * r) return false;
+      }
+      return true;
+    });
+    if (kept.length !== strokesOfOpen().length) {
+      updateNote(state.openId, { ink: kept });
+      drawInk();
+    }
+  }
+
+  function acceptPointer(ev) {
+    return !(state.penOnly && ev.pointerType && ev.pointerType !== 'pen');
+  }
+
+  function onInkDown(ev) {
+    if (!state.decor || !state.openId || !acceptPointer(ev)) return;
+    const pt = localPoint(ev);
+
+    if (state.tool === 'sticker') {
+      const list = stickersOfOpen().concat([{ s: state.sticker, x: pt.x, y: pt.y, z: STICKER_SIZES[1] }]);
+      updateNote(state.openId, { stickers: list });
+      renderStickers();
+      return;
+    }
+    if (state.tool === 'eraser') { eraseAt(pt); els.inkCanvas.setPointerCapture(ev.pointerId); return; }
+
+    ev.preventDefault();
+    const t = toolOf(state.tool);
+    const press = ev.pressure && ev.pressure > 0 ? ev.pressure : 0.5;
+    drawing = { t: state.tool, c: state.color, w: round4(t.w * (0.6 + 0.8 * press)), p: [pt.x, pt.y] };
+    els.inkCanvas.setPointerCapture(ev.pointerId);
+  }
+
+  function onInkMove(ev) {
+    if (!state.decor || !acceptPointer(ev)) return;
+    if (state.tool === 'eraser' && ev.buttons) { eraseAt(localPoint(ev)); return; }
+    if (!drawing) return;
+    const pt = localPoint(ev);
+    const n = drawing.p.length;
+    const dx = pt.x - drawing.p[n - 2], dy = pt.y - drawing.p[n - 1];
+    if (dx * dx + dy * dy < 0.000004) return;   // 미세한 떨림은 버려 용량을 아낀다
+    drawing.p.push(pt.x, pt.y);
+    drawInk();
+  }
+
+  function onInkUp() {
+    if (!drawing) return;
+    if (drawing.p.length >= 2) {
+      updateNote(state.openId, { ink: strokesOfOpen().concat([drawing]) });
+    }
+    drawing = null;
+    drawInk();
+  }
+
+  function stickersOfOpen() {
+    const open = state.events.filter(e => e.id === state.openId)[0];
+    return open ? stickersOf(open) : [];
+  }
+
+  function renderStickers() {
+    const W = canvasWidth();
+    els.stickerLayer.innerHTML = '';
+    stickersOfOpen().forEach((st, idx) => {
+      const el = document.createElement('div');
+      el.className = 'stk';
+      el.textContent = st.s;
+      el.style.left = (st.x * W) + 'px';
+      el.style.top = (st.y * W) + 'px';
+      el.style.fontSize = st.z + 'px';
+
+      const del = document.createElement('button');
+      del.className = 'stk-del';
+      del.textContent = '×';
+      del.addEventListener('pointerdown', (ev) => {
+        ev.stopPropagation();
+        updateNote(state.openId, { stickers: stickersOfOpen().filter((_, i) => i !== idx) });
+        renderStickers();
+      });
+      el.appendChild(del);
+
+      el.addEventListener('pointerdown', (ev) => {
+        if (!state.decor) return;
+        ev.stopPropagation();
+        ev.preventDefault();
+        const r = els.inkCanvas.getBoundingClientRect();
+        dragging = { idx, moved: false, w: r.width || 1 };
+        el.setPointerCapture(ev.pointerId);
+      });
+      /* 끄는 동안에는 화면만 옮기고, 손을 뗄 때 한 번만 저장한다.
+         매 프레임 localStorage에 쓰면 태블릿에서 눈에 띄게 끊긴다. */
+      el.addEventListener('pointermove', (ev) => {
+        if (!dragging || dragging.idx !== idx) return;
+        const pt = localPoint(ev);
+        dragging.moved = true;
+        dragging.at = pt;
+        el.style.left = (pt.x * dragging.w) + 'px';
+        el.style.top = (pt.y * dragging.w) + 'px';
+      });
+      el.addEventListener('pointerup', () => {
+        if (!dragging || dragging.idx !== idx) return;
+        const list = stickersOfOpen().slice();
+        if (dragging.moved && dragging.at) {
+          list[idx] = Object.assign({}, list[idx], { x: dragging.at.x, y: dragging.at.y });
+          updateNote(state.openId, { stickers: list });
+        } else {   // 제자리 탭이면 크기를 순환시킨다
+          const next = STICKER_SIZES[(STICKER_SIZES.indexOf(list[idx].z) + 1) % STICKER_SIZES.length];
+          list[idx] = Object.assign({}, list[idx], { z: next });
+          updateNote(state.openId, { stickers: list });
+          renderStickers();
+        }
+        dragging = null;
+      });
+
+      els.stickerLayer.appendChild(el);
+    });
+  }
+
+  function renderDecorBar() {
+    els.decorBar.classList.toggle('open', state.decor);
+    els.modalRead.classList.toggle('decorating', state.decor);
+    els.modalDecorToggle.classList.toggle('on', state.decor);
+    els.modalDecorToggle.textContent = state.decor ? '꾸미기 끝' : '꾸미기';
+    if (!state.decor) return;
+
+    els.toolGroup.innerHTML = '';
+    TOOLS.forEach(t => {
+      const b = document.createElement('button');
+      b.className = 'decor-btn' + (state.tool === t.k ? ' on' : '');
+      b.textContent = t.label;
+      b.addEventListener('click', () => { state.tool = t.k; renderDecorBar(); });
+      els.toolGroup.appendChild(b);
+    });
+
+    els.colorGroup.innerHTML = '';
+    COLORS.forEach(c => {
+      const b = document.createElement('button');
+      b.className = 'swatch' + (state.color === c ? ' on' : '');
+      b.style.background = c;
+      b.title = c;
+      b.addEventListener('click', () => { state.color = c; renderDecorBar(); });
+      els.colorGroup.appendChild(b);
+    });
+
+    els.stickerGroup.innerHTML = '';
+    STICKERS.forEach(s => {
+      const b = document.createElement('button');
+      b.className = 'sticker-pick' + (state.sticker === s ? ' on' : '');
+      b.textContent = s;
+      b.addEventListener('click', () => { state.sticker = s; state.tool = 'sticker'; renderDecorBar(); });
+      els.stickerGroup.appendChild(b);
+    });
+
+    els.decorHint.textContent = state.tool === 'sticker'
+      ? '노트를 눌러 붙이고, 끌어서 옮기고, 탭하면 크기가 바뀌어요 · 자동 저장'
+      : (state.penOnly ? '펜으로 그리고 손가락으로는 스크롤해요 · 자동 저장' : '손가락으로도 그려져요 · 자동 저장');
+  }
+
+  function renderDecor() {
+    if (!state.openId) return;
+    fitCanvas();
+    drawInk();
+    renderStickers();
   }
 
   /* ---------------- backup + restore ---------------- */
@@ -949,6 +1266,59 @@
     if (f) restore(f);
     e.target.value = '';
   });
+
+  /* 선택 영역을 ==…== 로 감싼다. 본문에 그대로 남으니 검색·백업에도 따라간다. */
+  function markSelection(ta, onChange) {
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    if (s === e) { ta.focus(); return; }
+    const v = ta.value;
+    const sel = v.slice(s, e);
+    const wrapped = /^==[\s\S]+==$/.test(sel) ? sel.slice(2, -2) : '==' + sel + '==';
+    ta.value = v.slice(0, s) + wrapped + v.slice(e);
+    ta.focus();
+    ta.setSelectionRange(s, s + wrapped.length);
+    onChange(ta.value);
+  }
+
+  $('markBtn').addEventListener('click', () => {
+    markSelection(els.draftBody, (v) => { state.body = v; renderEditor(); });
+  });
+  $('modalMarkBtn').addEventListener('click', () => {
+    markSelection(els.modalBodyInput, (v) => {
+      state.mBody = v;
+      els.modalRendered.innerHTML = mdToHtml(state.mBody || '_내용이 없습니다._');
+      requestAnimationFrame(renderDecor);
+    });
+  });
+
+  els.modalDecorToggle.addEventListener('click', () => {
+    state.decor = !state.decor;
+    if (state.decor) state.mEdit = false;   // 꾸밀 땐 읽기 화면을 넓게 쓴다
+    renderModal();
+  });
+  $('undoInk').addEventListener('click', () => {
+    const ink = strokesOfOpen();
+    if (!ink.length) return;
+    updateNote(state.openId, { ink: ink.slice(0, -1) });
+    drawInk();
+  });
+  $('clearInk').addEventListener('click', () => {
+    if (!strokesOfOpen().length && !stickersOfOpen().length) return;
+    if (!window.confirm('이 노트의 필기와 스티커를 모두 지웁니다. 계속할까요?')) return;
+    updateNote(state.openId, { ink: [], stickers: [] });
+    renderDecor();
+  });
+  $('penOnly').addEventListener('change', (e) => {
+    state.penOnly = e.target.checked;
+    els.inkCanvas.style.touchAction = state.penOnly ? 'auto' : 'none';
+    renderDecorBar();
+  });
+
+  els.inkCanvas.addEventListener('pointerdown', onInkDown);
+  els.inkCanvas.addEventListener('pointermove', onInkMove);
+  els.inkCanvas.addEventListener('pointerup', onInkUp);
+  els.inkCanvas.addEventListener('pointercancel', onInkUp);
+  window.addEventListener('resize', () => { if (state.openId) renderDecor(); });
 
   els.draftTitle.addEventListener('input', (e) => { state.title = e.target.value; });
   els.draftBody.addEventListener('input', (e) => { state.body = e.target.value; renderEditor(); });
