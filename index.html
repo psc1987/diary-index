@@ -202,7 +202,6 @@
   .swatch.on { border-color: #fff; }
   .sticker-pick { border: 1px solid rgba(255,255,255,0.18); border-radius: 8px; background: rgba(255,255,255,0.05); padding: 3px 7px; font-size: 16px; line-height: 1.2; cursor: pointer; }
   .sticker-pick.on { border-color: #ffd166; background: rgba(255,209,102,0.2); }
-  .decor-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: rgba(232,230,239,0.7); cursor: pointer; }
   .decor-hint { font-size: 11.5px; color: rgba(232,230,239,0.45); }
 
   .read-inner { position: relative; min-height: 100%; }
@@ -349,14 +348,12 @@
     </header>
     <div class="decor-bar" id="decorBar">
       <div class="decor-group" id="toolGroup"></div>
+      <div class="decor-group" id="sizeGroup"></div>
       <div class="decor-group" id="colorGroup"></div>
       <div class="decor-group" id="stickerGroup"></div>
       <div class="decor-group">
         <button class="decor-btn" id="undoInk">되돌리기</button>
-        <button class="decor-btn" id="clearInk">전체 지우기</button>
-      </div>
-      <div class="decor-group">
-        <label class="decor-toggle"><input type="checkbox" id="penOnly" checked> 펜만 인식</label>
+        <button class="decor-btn" id="clearInk">지우기</button>
       </div>
       <span class="decor-hint" id="decorHint"></span>
     </div>
@@ -496,18 +493,19 @@
     mFolder: '일반',
     mEdit: true,
     decor: false,
-    tool: 'hl',
+    tool: 'pen',
     color: '#ffd166',
-    sticker: '⭐',
-    penOnly: true
+    size: 1,
+    sticker: '⭐'
   };
 
-  const TOOLS = [
-    { k: 'hl', label: '형광펜', w: 0.028, alpha: 0.34 },
-    { k: 'pen', label: '펜', w: 0.005, alpha: 0.95 },
-    { k: 'eraser', label: '지우개', w: 0.03, alpha: 1 },
-    { k: 'sticker', label: '스티커', w: 0, alpha: 1 }
+  /* 펜은 하나로 통합한다. 굵기와 색만 고르면 형광펜처럼도, 볼펜처럼도 쓸 수 있다. */
+  const PEN_SIZES = [
+    { label: '가늘게', w: 0.004, alpha: 0.95 },
+    { label: '보통', w: 0.012, alpha: 0.7 },
+    { label: '굵게', w: 0.032, alpha: 0.4 }
   ];
+  const ERASER_R = 0.03;
   const COLORS = ['#ffd166', '#5ac8ff', '#ff8fa3', '#9dff8f', '#c9a7ff', '#ffffff'];
   const STICKERS = ['⭐', '🔥', '✅', '❗', '💡', '❤️', '🌱', '🎯', '📌', '😀', '😭', '🍀'];
   const STICKER_SIZES = [28, 44, 64];
@@ -617,7 +615,8 @@
     modalTitleInput: $('modalTitleInput'), modalBodyInput: $('modalBodyInput'),
     modalTitleRead: $('modalTitleRead'), modalMeta: $('modalMeta'), modalRendered: $('modalRendered'),
     modalDecorToggle: $('modalDecorToggle'), decorBar: $('decorBar'), decorHint: $('decorHint'),
-    toolGroup: $('toolGroup'), colorGroup: $('colorGroup'), stickerGroup: $('stickerGroup'),
+    toolGroup: $('toolGroup'), sizeGroup: $('sizeGroup'),
+    colorGroup: $('colorGroup'), stickerGroup: $('stickerGroup'),
     modalRead: $('modalRead'), readInner: $('readInner'),
     inkCanvas: $('inkCanvas'), stickerLayer: $('stickerLayer')
   };
@@ -903,6 +902,8 @@
     state.mBody = e.body || '';
     state.mFolder = e.folder || '일반';
     state.mEdit = true;
+    strokes = [];       // 필기는 저장하지 않으므로 열 때마다 비운다
+    drawing = null;
     els.modalTitleInput.value = state.mTitle;
     els.modalBodyInput.value = state.mBody;
     render();
@@ -910,6 +911,8 @@
 
   function closeModal() {
     state.openId = null;
+    strokes = [];
+    drawing = null;
     render();
   }
 
@@ -943,18 +946,15 @@
   }
 
   /* ---------------- decoration: ink + stickers ---------------- */
-  /* 좌표는 캔버스 폭에 대한 비율로 저장한다. 태블릿과 PC의 폭이 달라도
-     같은 자리에 그려지고, 소수점을 줄여 localStorage 용량도 아낀다.
-     y도 폭으로 나눠 가로세로 비율이 틀어지지 않게 한다. */
+  /* 필기는 읽으면서 그때그때 표시하는 용도라 저장하지 않는다. 노트를 닫으면
+     사라진다. 좌표는 캔버스 폭 대비 비율로 두어 화면 크기가 달라도 어긋나지
+     않게 하고, y도 폭으로 나눠 가로세로 비율을 지킨다. */
   const round4 = (n) => Math.round(n * 10000) / 10000;
-  const toolOf = (k) => TOOLS.filter(t => t.k === k)[0] || TOOLS[0];
+  const penOf = () => PEN_SIZES[state.size] || PEN_SIZES[1];
 
-  let drawing = null;   // 그리는 중인 스트로크
+  let strokes = [];     // 이번에 연 노트에서 그린 것 (저장하지 않음)
+  let drawing = null;   // 그리는 중인 획
   let dragging = null;  // 옮기는 중인 스티커
-
-  function canvasWidth() {
-    return els.inkCanvas.clientWidth || els.readInner.clientWidth || 1;
-  }
 
   function localPoint(ev) {
     const r = els.inkCanvas.getBoundingClientRect();
@@ -976,9 +976,16 @@
     els.stickerLayer.style.height = h + 'px';
   }
 
-  function strokesOfOpen() {
-    const open = state.events.filter(e => e.id === state.openId)[0];
-    return open ? inkOf(open) : [];
+  /* 점을 직선으로 이으면 각져 보인다. 중점을 지나는 곡선으로 부드럽게 만든다. */
+  function strokePath(ctx, p, W) {
+    ctx.beginPath();
+    ctx.moveTo(p[0] * W, p[1] * W);
+    if (p.length === 2) { ctx.lineTo(p[0] * W + 0.1, p[1] * W); return; }
+    for (let i = 2; i < p.length - 2; i += 2) {
+      const mx = (p[i] + p[i + 2]) / 2, my = (p[i + 1] + p[i + 3]) / 2;
+      ctx.quadraticCurveTo(p[i] * W, p[i + 1] * W, mx * W, my * W);
+    }
+    ctx.lineTo(p[p.length - 2] * W, p[p.length - 1] * W);
   }
 
   function drawInk() {
@@ -986,20 +993,15 @@
     const ctx = cv.getContext('2d');
     const W = cv.clientWidth;
     ctx.clearRect(0, 0, cv.clientWidth, cv.clientHeight);
-    const all = strokesOfOpen().concat(drawing ? [drawing] : []);
-    all.forEach(s => {
+    strokes.concat(drawing ? [drawing] : []).forEach(s => {
       if (!s.p || s.p.length < 2) return;
-      const t = toolOf(s.t);
       ctx.save();
-      ctx.globalAlpha = t.alpha;
+      ctx.globalAlpha = s.a;
       ctx.strokeStyle = s.c;
       ctx.lineWidth = Math.max(1, s.w * W);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.beginPath();
-      ctx.moveTo(s.p[0] * W, s.p[1] * W);
-      for (let i = 2; i < s.p.length; i += 2) ctx.lineTo(s.p[i] * W, s.p[i + 1] * W);
-      if (s.p.length === 2) ctx.lineTo(s.p[0] * W + 0.1, s.p[1] * W);
+      strokePath(ctx, s.p, W);
       ctx.stroke();
       ctx.restore();
     });
@@ -1007,60 +1009,52 @@
 
   /* 지우개는 획 단위로 지운다. 점 하나라도 반경 안에 들면 그 획 전체를 삭제. */
   function eraseAt(pt) {
-    const r = toolOf('eraser').w;
-    const kept = strokesOfOpen().filter(s => {
+    const before = strokes.length;
+    strokes = strokes.filter(s => {
       for (let i = 0; i < s.p.length; i += 2) {
         const dx = s.p[i] - pt.x, dy = s.p[i + 1] - pt.y;
-        if (dx * dx + dy * dy < r * r) return false;
+        if (dx * dx + dy * dy < ERASER_R * ERASER_R) return false;
       }
       return true;
     });
-    if (kept.length !== strokesOfOpen().length) {
-      updateNote(state.openId, { ink: kept });
-      drawInk();
-    }
-  }
-
-  function acceptPointer(ev) {
-    return !(state.penOnly && ev.pointerType && ev.pointerType !== 'pen');
+    if (strokes.length !== before) drawInk();
   }
 
   function onInkDown(ev) {
-    if (!state.decor || !state.openId || !acceptPointer(ev)) return;
+    if (!state.decor || !state.openId) return;
     const pt = localPoint(ev);
 
     if (state.tool === 'sticker') {
-      const list = stickersOfOpen().concat([{ s: state.sticker, x: pt.x, y: pt.y, z: STICKER_SIZES[1] }]);
-      updateNote(state.openId, { stickers: list });
+      updateNote(state.openId, { stickers: stickersOfOpen().concat([{ s: state.sticker, x: pt.x, y: pt.y, z: STICKER_SIZES[1] }]) });
       renderStickers();
       return;
     }
-    if (state.tool === 'eraser') { eraseAt(pt); els.inkCanvas.setPointerCapture(ev.pointerId); return; }
 
     ev.preventDefault();
-    const t = toolOf(state.tool);
-    const press = ev.pressure && ev.pressure > 0 ? ev.pressure : 0.5;
-    drawing = { t: state.tool, c: state.color, w: round4(t.w * (0.6 + 0.8 * press)), p: [pt.x, pt.y] };
     els.inkCanvas.setPointerCapture(ev.pointerId);
+    if (state.tool === 'eraser') { eraseAt(pt); return; }
+
+    const pen = penOf();
+    const press = ev.pressure > 0 && ev.pressure < 1 ? ev.pressure : 0.5;
+    drawing = { c: state.color, a: pen.alpha, w: round4(pen.w * (0.7 + 0.6 * press)), p: [pt.x, pt.y] };
   }
 
   function onInkMove(ev) {
-    if (!state.decor || !acceptPointer(ev)) return;
-    if (state.tool === 'eraser' && ev.buttons) { eraseAt(localPoint(ev)); return; }
+    if (!state.decor) return;
+    if (state.tool === 'eraser') { if (ev.buttons) eraseAt(localPoint(ev)); return; }
     if (!drawing) return;
+    ev.preventDefault();
     const pt = localPoint(ev);
     const n = drawing.p.length;
     const dx = pt.x - drawing.p[n - 2], dy = pt.y - drawing.p[n - 1];
-    if (dx * dx + dy * dy < 0.000004) return;   // 미세한 떨림은 버려 용량을 아낀다
+    if (dx * dx + dy * dy < 0.0000005) return;   // 제자리 떨림만 걸러낸다
     drawing.p.push(pt.x, pt.y);
     drawInk();
   }
 
   function onInkUp() {
     if (!drawing) return;
-    if (drawing.p.length >= 2) {
-      updateNote(state.openId, { ink: strokesOfOpen().concat([drawing]) });
-    }
+    if (drawing.p.length >= 2) strokes.push(drawing);
     drawing = null;
     drawInk();
   }
@@ -1071,7 +1065,7 @@
   }
 
   function renderStickers() {
-    const W = canvasWidth();
+    const W = els.inkCanvas.clientWidth || els.readInner.clientWidth || 1;
     els.stickerLayer.innerHTML = '';
     stickersOfOpen().forEach((st, idx) => {
       const el = document.createElement('div');
@@ -1095,12 +1089,10 @@
         if (!state.decor) return;
         ev.stopPropagation();
         ev.preventDefault();
-        const r = els.inkCanvas.getBoundingClientRect();
-        dragging = { idx, moved: false, w: r.width || 1 };
+        dragging = { idx, moved: false, w: els.inkCanvas.getBoundingClientRect().width || 1 };
         el.setPointerCapture(ev.pointerId);
       });
-      /* 끄는 동안에는 화면만 옮기고, 손을 뗄 때 한 번만 저장한다.
-         매 프레임 localStorage에 쓰면 태블릿에서 눈에 띄게 끊긴다. */
+      /* 끄는 동안에는 화면만 옮기고 손을 뗄 때 한 번만 저장한다. */
       el.addEventListener('pointermove', (ev) => {
         if (!dragging || dragging.idx !== idx) return;
         const pt = localPoint(ev);
@@ -1132,16 +1124,27 @@
     els.decorBar.classList.toggle('open', state.decor);
     els.modalRead.classList.toggle('decorating', state.decor);
     els.modalDecorToggle.classList.toggle('on', state.decor);
-    els.modalDecorToggle.textContent = state.decor ? '꾸미기 끝' : '꾸미기';
+    els.modalDecorToggle.textContent = state.decor ? '펜 끄기' : '펜';
+    /* 펜을 켠 동안에는 브라우저 스크롤을 막아야 선이 끊기지 않는다. */
+    els.inkCanvas.style.touchAction = state.decor ? 'none' : 'auto';
     if (!state.decor) return;
 
     els.toolGroup.innerHTML = '';
-    TOOLS.forEach(t => {
+    [['pen', '펜'], ['eraser', '지우개'], ['sticker', '스티커']].forEach(t => {
       const b = document.createElement('button');
-      b.className = 'decor-btn' + (state.tool === t.k ? ' on' : '');
-      b.textContent = t.label;
-      b.addEventListener('click', () => { state.tool = t.k; renderDecorBar(); });
+      b.className = 'decor-btn' + (state.tool === t[0] ? ' on' : '');
+      b.textContent = t[1];
+      b.addEventListener('click', () => { state.tool = t[0]; renderDecorBar(); });
       els.toolGroup.appendChild(b);
+    });
+
+    els.sizeGroup.innerHTML = '';
+    PEN_SIZES.forEach((p, i) => {
+      const b = document.createElement('button');
+      b.className = 'decor-btn' + (state.size === i ? ' on' : '');
+      b.textContent = p.label;
+      b.addEventListener('click', () => { state.size = i; state.tool = 'pen'; renderDecorBar(); });
+      els.sizeGroup.appendChild(b);
     });
 
     els.colorGroup.innerHTML = '';
@@ -1149,23 +1152,22 @@
       const b = document.createElement('button');
       b.className = 'swatch' + (state.color === c ? ' on' : '');
       b.style.background = c;
-      b.title = c;
-      b.addEventListener('click', () => { state.color = c; renderDecorBar(); });
+      b.addEventListener('click', () => { state.color = c; state.tool = 'pen'; renderDecorBar(); });
       els.colorGroup.appendChild(b);
     });
 
     els.stickerGroup.innerHTML = '';
     STICKERS.forEach(s => {
       const b = document.createElement('button');
-      b.className = 'sticker-pick' + (state.sticker === s ? ' on' : '');
+      b.className = 'sticker-pick' + (state.sticker === s && state.tool === 'sticker' ? ' on' : '');
       b.textContent = s;
       b.addEventListener('click', () => { state.sticker = s; state.tool = 'sticker'; renderDecorBar(); });
       els.stickerGroup.appendChild(b);
     });
 
     els.decorHint.textContent = state.tool === 'sticker'
-      ? '노트를 눌러 붙이고, 끌어서 옮기고, 탭하면 크기가 바뀌어요 · 자동 저장'
-      : (state.penOnly ? '펜으로 그리고 손가락으로는 스크롤해요 · 자동 저장' : '손가락으로도 그려져요 · 자동 저장');
+      ? '눌러 붙이고 · 끌어서 이동 · 탭하면 크기 변경 · 스티커는 저장돼요'
+      : '필기는 저장되지 않아요 · 노트를 닫으면 사라집니다';
   }
 
   function renderDecor() {
@@ -1270,8 +1272,18 @@
   /* 선택 영역을 ==…== 로 감싼다. 본문에 그대로 남으니 검색·백업에도 따라간다. */
   function markSelection(ta, onChange) {
     const s = ta.selectionStart, e = ta.selectionEnd;
-    if (s === e) { ta.focus(); return; }
     const v = ta.value;
+
+    /* 선택 없이 눌러도 반응하도록 빈 마커를 넣고 커서를 안쪽에 둔다.
+       그냥 무시하면 버튼이 고장 난 것처럼 보인다. */
+    if (s === e) {
+      ta.value = v.slice(0, s) + '====' + v.slice(s);
+      ta.focus();
+      ta.setSelectionRange(s + 2, s + 2);
+      onChange(ta.value);
+      return;
+    }
+
     const sel = v.slice(s, e);
     const wrapped = /^==[\s\S]+==$/.test(sel) ? sel.slice(2, -2) : '==' + sel + '==';
     ta.value = v.slice(0, s) + wrapped + v.slice(e);
@@ -1297,21 +1309,13 @@
     renderModal();
   });
   $('undoInk').addEventListener('click', () => {
-    const ink = strokesOfOpen();
-    if (!ink.length) return;
-    updateNote(state.openId, { ink: ink.slice(0, -1) });
+    if (!strokes.length) return;
+    strokes.pop();
     drawInk();
   });
   $('clearInk').addEventListener('click', () => {
-    if (!strokesOfOpen().length && !stickersOfOpen().length) return;
-    if (!window.confirm('이 노트의 필기와 스티커를 모두 지웁니다. 계속할까요?')) return;
-    updateNote(state.openId, { ink: [], stickers: [] });
-    renderDecor();
-  });
-  $('penOnly').addEventListener('change', (e) => {
-    state.penOnly = e.target.checked;
-    els.inkCanvas.style.touchAction = state.penOnly ? 'auto' : 'none';
-    renderDecorBar();
+    strokes = [];
+    drawInk();
   });
 
   els.inkCanvas.addEventListener('pointerdown', onInkDown);
