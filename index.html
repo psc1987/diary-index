@@ -302,7 +302,6 @@
 
 > 인용 · `코드`"></textarea>
         <div class="editor-actions">
-          <button class="btn-ghost" id="markBtn" title="선택한 글자에 형광펜">형광펜</button>
           <button class="review-toggle" id="reviewToggle"><span>복습</span><span class="cycle">1 · 7 · 30일</span></button>
           <span class="review-hint" id="reviewHint"></span>
           <button class="btn-solid" id="addEventBtn">일정 추가</button>
@@ -339,8 +338,7 @@
         <select class="modal-folder" id="modalFolder"></select>
       </div>
       <div class="modal-actions">
-        <button class="btn-outline" id="modalMarkBtn" title="선택한 글자에 형광펜">형광펜</button>
-        <button class="btn-outline" id="modalDecorToggle">꾸미기</button>
+        <button class="btn-outline" id="modalDecorToggle">펜</button>
         <button class="btn-outline" id="modalEditToggle"></button>
         <button class="btn-save" id="modalSave">저장</button>
         <button class="btn-close" id="modalClose">×</button>
@@ -1267,40 +1265,6 @@
     const f = e.target.files && e.target.files[0];
     if (f) restore(f);
     e.target.value = '';
-  });
-
-  /* 선택 영역을 ==…== 로 감싼다. 본문에 그대로 남으니 검색·백업에도 따라간다. */
-  function markSelection(ta, onChange) {
-    const s = ta.selectionStart, e = ta.selectionEnd;
-    const v = ta.value;
-
-    /* 선택 없이 눌러도 반응하도록 빈 마커를 넣고 커서를 안쪽에 둔다.
-       그냥 무시하면 버튼이 고장 난 것처럼 보인다. */
-    if (s === e) {
-      ta.value = v.slice(0, s) + '====' + v.slice(s);
-      ta.focus();
-      ta.setSelectionRange(s + 2, s + 2);
-      onChange(ta.value);
-      return;
-    }
-
-    const sel = v.slice(s, e);
-    const wrapped = /^==[\s\S]+==$/.test(sel) ? sel.slice(2, -2) : '==' + sel + '==';
-    ta.value = v.slice(0, s) + wrapped + v.slice(e);
-    ta.focus();
-    ta.setSelectionRange(s, s + wrapped.length);
-    onChange(ta.value);
-  }
-
-  $('markBtn').addEventListener('click', () => {
-    markSelection(els.draftBody, (v) => { state.body = v; renderEditor(); });
-  });
-  $('modalMarkBtn').addEventListener('click', () => {
-    markSelection(els.modalBodyInput, (v) => {
-      state.mBody = v;
-      els.modalRendered.innerHTML = mdToHtml(state.mBody || '_내용이 없습니다._');
-      requestAnimationFrame(renderDecor);
-    });
   });
 
   els.modalDecorToggle.addEventListener('click', () => {
