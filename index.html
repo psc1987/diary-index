@@ -10,6 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Geist에는 한글 글리프가 없어 한글이 OS 기본 폰트로 떨어진다. Pretendard로 받아낸다. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
     /* 어두운 배경에 순백(#fff)을 얹으면 명암비가 19:1까지 올라 글자가 번져 보인다.
@@ -148,7 +149,8 @@
   .lib-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
   .lib-title { font-size: 13px; letter-spacing: 0.09em; text-transform: uppercase; color: rgba(255,255,255,0.8); }
   .lib-note { font-size: 12.5px; color: rgba(255,255,255,0.55); }
-  .lib-tools { display: flex; align-items: center; gap: 10px; }
+  .lib-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+  .sync-state { font-family: 'Geist Mono', monospace; font-size: 11px; color: rgba(232,230,239,0.5); }
   .lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-items: start; }
   .card { border: 1px solid rgba(255,255,255,0.24); border-radius: 16px; padding: 20px 22px; background: rgba(255,255,255,0.095); cursor: pointer; transition: all 180ms ease; display: flex; flex-direction: column; gap: 10px; }
   .card:hover { background: rgba(255,255,255,0.11); border-color: rgba(255,255,255,0.34); }
@@ -320,6 +322,8 @@
       <span class="lib-title" id="libraryTitle"></span>
       <div class="lib-tools">
         <span class="lib-note">카드를 클릭하면 전체 화면으로 열려요</span>
+        <span class="sync-state" id="syncState"></span>
+        <button class="btn-ghost" id="syncBtn">구글 연결</button>
         <button class="btn-ghost" id="backupBtn">백업</button>
         <button class="btn-ghost" id="restoreBtn">복원</button>
         <input type="file" id="restoreFile" accept="application/json,.json" hidden>
@@ -383,8 +387,16 @@
   const REVIEW_ACCENT = '#5ac8ff'; // 복습 일정 강조색
   const MONDAY_FIRST = false;      // 주 시작 요일
 
+  /* 구글 드라이브 동기화. 콘솔에서 발급받은 OAuth 클라이언트 ID를 넣으면
+     켜지고, 비어 있으면 동기화 UI 자체가 숨겨진 채 평소대로 동작한다.
+     이 값은 비밀이 아니라 공개 페이지에 그대로 두도록 설계된 것이다. */
+  const GOOGLE_CLIENT_ID = '';
+  const DRIVE_FILE = 'foldcraft-diary.json';
+  const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
   const KEY = 'foldcraft.schedule.v1';
   const FKEY = 'foldcraft.folders.v1';
+  const MKEY = 'foldcraft.meta.v1';
   const REVIEW_STEPS = [1, 7, 30];
   const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
   const WEEKDAYS_SUN = ['일','월','화','수','목','금','토'];
@@ -524,6 +536,16 @@
     }
   }
 
+  /* 동기화용 가변 상태. 초기화 순서 때문에 여기서 미리 선언해 둔다
+     (저장 함수가 아래에서 이 값들을 참조한다). */
+  let meta = load(MKEY, { updatedAt: '', fileId: '', connected: false });
+  let gToken = '';
+  let tokenClient = null;
+  let pushTimer = null;
+  let syncMsg = '';
+
+  const saveMeta = () => persist(MKEY, meta);
+
   /* 예전 구조는 복습을 독립 사본(rep + id 접미사 -rN)으로 저장했다.
      원본 하나에 review: [1, 7, 30] 형태로 합치고, 원본이 없는 사본은
      내용을 잃지 않도록 일반 노트로 살려둔다. 새 구조에는 영향이 없다. */
@@ -552,8 +574,15 @@
     });
     return base.concat(orphans);
   }
-  const saveEvents = () => persist(KEY, state.events);
-  const saveFolders = () => persist(FKEY, state.folders);
+  /* 저장할 때마다 변경 시각을 남기고 원격 반영을 예약한다. 이 시각이
+     기기 간 어느 쪽이 최신인지 판단하는 유일한 근거다. */
+  function stamp() {
+    meta.updatedAt = new Date().toISOString();
+    saveMeta();
+    schedulePush();
+  }
+  const saveEvents = () => { persist(KEY, state.events); stamp(); };
+  const saveFolders = () => { persist(FKEY, state.folders); stamp(); };
 
   if (!state.folders.length) state.folders = ['일반', '학습', '프로젝트'];
   if (!state.events.length) {
@@ -563,9 +592,11 @@
     }];
   }
 
-  /* 마이그레이션·시드 결과를 바로 저장해 다음 로드에서 되풀이되지 않게 한다. */
-  saveEvents();
-  saveFolders();
+  /* 마이그레이션·시드 결과를 바로 저장해 다음 로드에서 되풀이되지 않게 한다.
+     stamp()를 거치지 않는다 — 페이지를 열기만 해도 변경 시각이 밀리면
+     아무것도 안 고쳤는데 원격을 덮어쓰게 된다. */
+  persist(KEY, state.events);
+  persist(FKEY, state.folders);
 
   const inFolder = (e) => state.folder === '전체' || (e.folder || '일반') === state.folder;
   const stripeOf = (e) => (e.rep ? REVIEW_ACCENT : ACCENT);
@@ -608,6 +639,7 @@
     draftTitle: $('draftTitle'), draftBody: $('draftBody'), draftPreview: $('draftPreview'),
     reviewToggle: $('reviewToggle'), reviewHint: $('reviewHint'),
     libraryTitle: $('libraryTitle'), libGrid: $('libGrid'), libEmpty: $('libEmpty'),
+    syncBtn: $('syncBtn'), syncState: $('syncState'),
     modal: $('modal'), modalDate: $('modalDate'), modalFolder: $('modalFolder'),
     modalEditToggle: $('modalEditToggle'), modalBodyGrid: $('modalBodyGrid'), modalEditor: $('modalEditor'),
     modalTitleInput: $('modalTitleInput'), modalBodyInput: $('modalBodyInput'),
@@ -1175,6 +1207,160 @@
     renderStickers();
   }
 
+  /* ---------------- google drive sync ---------------- */
+  /* 기기 간 공유는 데이터를 바깥 어딘가에 두어야 가능하다. DB를 두는 대신
+     사용자 본인의 구글 드라이브에 JSON 파일 하나로 둔다. 서버가 필요 없고
+     데이터 소유권이 사용자에게 남으며 서비스가 중지될 일도 없다.
+
+     혼자 쓰는 것을 전제로 충돌은 updatedAt이 최신인 쪽을 택한다. 두 기기를
+     각각 오프라인에서 고치면 나중에 올린 쪽만 남으므로, 백업 기능은 그대로
+     안전장치로 남겨 둔다. */
+  const BOUNDARY = '-----foldcraft-multipart-boundary';
+  const hhmm = () => new Date().toTimeString().slice(0, 5);
+
+  function setSync(msg) { syncMsg = msg; renderSync(); }
+
+  function renderSync() {
+    if (!GOOGLE_CLIENT_ID) {
+      els.syncBtn.style.display = 'none';
+      els.syncState.textContent = '';
+      return;
+    }
+    els.syncBtn.style.display = '';
+    els.syncBtn.textContent = gToken ? '동기화' : '구글 연결';
+    els.syncState.textContent = syncMsg;
+  }
+
+  function gfetch(url, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ Authorization: 'Bearer ' + gToken }, opts.headers || {});
+    return fetch(url, opts).then(r => {
+      if (r.status === 401 || r.status === 403) { gToken = ''; throw new Error('로그인이 만료됐어요'); }
+      if (!r.ok) throw new Error('드라이브 오류 ' + r.status);
+      return r;
+    });
+  }
+
+  function findFile() {
+    if (meta.fileId) return Promise.resolve(meta.fileId);
+    const q = encodeURIComponent("name='" + DRIVE_FILE + "' and trashed=false");
+    return gfetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id)')
+      .then(r => r.json())
+      .then(j => (j.files && j.files.length ? j.files[0].id : ''));
+  }
+
+  function remoteDoc() {
+    return JSON.stringify({
+      app: 'foldcraft',
+      version: 2,
+      updatedAt: meta.updatedAt,
+      folders: state.folders,
+      events: state.events
+    });
+  }
+
+  function uploadRemote(id) {
+    const body = remoteDoc();
+    if (id) {
+      return gfetch('https://www.googleapis.com/upload/drive/v3/files/' + id + '?uploadType=media', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: body
+      }).then(() => id);
+    }
+    const multipart =
+      '--' + BOUNDARY + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' +
+      JSON.stringify({ name: DRIVE_FILE }) + '\r\n' +
+      '--' + BOUNDARY + '\r\nContent-Type: application/json\r\n\r\n' +
+      body + '\r\n--' + BOUNDARY + '--';
+    return gfetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+      method: 'POST',
+      headers: { 'Content-Type': 'multipart/related; boundary=' + BOUNDARY },
+      body: multipart
+    }).then(r => r.json()).then(j => j.id);
+  }
+
+  function applyRemote(remote) {
+    if (!remote || !Array.isArray(remote.events)) throw new Error('드라이브 파일 형식이 이상해요');
+    state.events = migrate(remote.events);
+    if (Array.isArray(remote.folders) && remote.folders.length) state.folders = remote.folders;
+    if (state.folder !== '전체' && state.folders.indexOf(state.folder) < 0) state.folder = '전체';
+    meta.updatedAt = remote.updatedAt || new Date().toISOString();
+    saveMeta();
+    persist(KEY, state.events);      // stamp() 없이 저장 — 내려받은 시각을 그대로 유지
+    persist(FKEY, state.folders);
+    render();
+  }
+
+  function syncNow() {
+    if (!GOOGLE_CLIENT_ID || !gToken) return Promise.resolve();
+    setSync('동기화 중…');
+    return findFile()
+      .then(id => {
+        if (!id) {
+          if (!meta.updatedAt) { meta.updatedAt = new Date().toISOString(); saveMeta(); }
+          return uploadRemote('').then(newId => {
+            meta.fileId = newId; meta.connected = true; saveMeta();
+            setSync('드라이브에 만듦 · ' + hhmm());
+          });
+        }
+        meta.fileId = id; meta.connected = true; saveMeta();
+        return gfetch('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media')
+          .then(r => r.json())
+          .then(remote => {
+            const rAt = (remote && remote.updatedAt) || '';
+            const lAt = meta.updatedAt || '';
+            if (rAt > lAt) { applyRemote(remote); setSync('내려받음 · ' + hhmm()); }
+            else if (lAt > rAt) return uploadRemote(id).then(() => setSync('올림 · ' + hhmm()));
+            else setSync('최신 상태 · ' + hhmm());
+          });
+      })
+      .catch(err => { setSync(err.message); });
+  }
+
+  function schedulePush() {
+    if (!gToken || !meta.fileId) return;
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => {
+      setSync('저장 중…');
+      uploadRemote(meta.fileId)
+        .then(() => setSync('저장됨 · ' + hhmm()))
+        .catch(err => setSync(err.message));
+    }, 2500);
+  }
+
+  function ensureClient() {
+    if (tokenClient) return true;
+    if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) return false;
+    tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback: (res) => {
+        if (res && res.access_token) { gToken = res.access_token; renderSync(); syncNow(); }
+        else setSync('로그인하지 못했어요');
+      },
+      error_callback: () => setSync('로그인 취소됨')
+    });
+    return true;
+  }
+
+  function connectDrive(interactive) {
+    if (!GOOGLE_CLIENT_ID) return;
+    if (!ensureClient()) { setSync('구글 스크립트 준비 중…'); return; }
+    tokenClient.requestAccessToken({ prompt: interactive ? 'consent' : '' });
+  }
+
+  /* 이미 연결한 적이 있을 때만 조용히 토큰을 시도한다. 첫 방문에 팝업을
+     띄우면 브라우저가 막는 데다 사용자가 원하지도 않은 로그인이 된다. */
+  function autoConnect() {
+    if (!GOOGLE_CLIENT_ID || !meta.connected) { renderSync(); return; }
+    let tries = 0;
+    const timer = setInterval(() => {
+      if (ensureClient()) { clearInterval(timer); connectDrive(false); }
+      else if (++tries > 20) { clearInterval(timer); setSync('구글 연결 실패'); }
+    }, 250);
+  }
+
   /* ---------------- backup + restore ---------------- */
   function backup() {
     const payload = {
@@ -1259,6 +1445,11 @@
     render();
   });
 
+  els.syncBtn.addEventListener('click', () => {
+    if (gToken) syncNow();
+    else connectDrive(true);
+  });
+
   $('backupBtn').addEventListener('click', backup);
   $('restoreBtn').addEventListener('click', () => $('restoreFile').click());
   $('restoreFile').addEventListener('change', (e) => {
@@ -1316,6 +1507,7 @@
   renderWeekdays();
   render();
   onScroll();
+  autoConnect();
 })();
 </script>
 </body>
